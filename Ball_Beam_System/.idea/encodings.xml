@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Encoding">
+    <file url="file://$PROJECT_DIR$/Core/Inc/VL53L0X/platform/vl53l0x_platform.h" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Inc/VL53L0X/platform/vl53l0x_platform.h" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/platform/src/vl53l0x_i2c.c" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/platform/src/vl53l0x_platform.c" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/src/vl53l0x.c" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/src/vl53l0x.c" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/src/vl53l0x_gen.c" charset="GBK" />
+    <file url="file://$PROJECT_DIR$/Core/Src/VL53L0X/src/vl53l0x_gen.c" charset="GBK" />
+  </component>
+</project>
