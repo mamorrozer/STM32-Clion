@@ -60,8 +60,8 @@ DMA_HandleTypeDef hdma_usart1_rx;
 char oled_line[24];
 PID_Handle pid;
 volatile uint16_t g_distance_mm = 0xFFFFU;
+volatile uint16_t g_last_valid_distance_mm = 0U;
 volatile float g_servo_angle = 90.0f;
-volatile uint8_t g_laser_sample_due = 1U;
 float g_setpoint_mm = 160.0f;
 uint32_t g_serial_last_tick = 0U;
 /* USER CODE END PV */
@@ -157,11 +157,6 @@ int main(void)
   Servo_Init();
   Servo_SetAngle(90.0f);
   PID_Init(&pid, 0.20f, 0.02f, 0.10f, 0.01f, 0.0f, 180.0f, 200.0f);
-  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
   Serial_Printf("VL53L0X ready\r\n");
   /* USER CODE END 2 */
 
@@ -170,19 +165,21 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    if (g_laser_sample_due != 0U)
+    uint16_t sampled_distance = VL53L0X_GetDistance();
+    g_distance_mm = sampled_distance;
+
+    if (sampled_distance != 0xFFFFU)
     {
-      g_laser_sample_due = 0U;
-      uint16_t sampled_distance = VL53L0X_GetDistance();
-      g_distance_mm = sampled_distance;
+      g_last_valid_distance_mm = sampled_distance;
+      g_servo_angle = PID_Update(&pid, g_setpoint_mm, (float)sampled_distance);
+      Servo_SetAngle(g_servo_angle);
+      char data[16];
+      sprintf(data, "%u ", sampled_distance);
+      Serial_SendString(data);
+      Serial_SendNumber((uint32_t)sampled_distance);
 
-      if (sampled_distance != 0xFFFFU)
-      {
-        g_servo_angle = PID_Update(&pid, g_setpoint_mm, (float)sampled_distance);
-        Servo_SetAngle(g_servo_angle);
-      }
+
     }
-
     /* 显示最近一次测距结果到 OLED */
     uint16_t distance = g_distance_mm;
     if (distance == 0xFFFFU)
@@ -194,14 +191,11 @@ int main(void)
       sprintf(oled_line, "Dis:%4u mm", distance);
     }
 
-    // OLED_NewFrame();
-    // OLED_PrintString(0, 0, "VL53L0X HIGH SPD", &font16x16, OLED_COLOR_NORMAL);
-    // OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
-    // OLED_ShowFrame();
-    //将测量得到的纯数值传到串口
-
-
-
+    OLED_NewFrame();
+    OLED_PrintString(0, 0, "VL53L0X HIGH SPD", &font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
+    OLED_ShowFrame();
+    
     HAL_Delay(10);
     /* USER CODE BEGIN 3 */
   }
@@ -506,10 +500,7 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-  if (htim->Instance == TIM2)
-  {
-    g_laser_sample_due = 1U;
-  }
+  (void)htim;
 }
 /* USER CODE END 4 */
 
