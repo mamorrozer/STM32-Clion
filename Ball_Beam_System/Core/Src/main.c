@@ -58,6 +58,13 @@
 
 #define PID_OUT_MIN_DEG               (-25.0f)
 #define PID_OUT_MAX_DEG               (25.0f)
+#define PID_INTEGRAL_ACTIVE_BAND_MM   45.0f
+#define PID_KP                        0.20f
+#define PID_KI                        0.015f
+#define PID_KD                        0.12f
+#define CONTROL_PERIOD_SEC            0.01f
+#define PID_INTEGRAL_LIMIT            120.0f
+#define INVALID_TELEMETRY_MM          (-999.0f)
 
 /* USER CODE END PD */
 
@@ -94,11 +101,12 @@ PID_Handle pid;
 volatile uint16_t g_distance_mm = 0xFFFFU;
 volatile uint16_t g_last_valid_distance_mm = 0U;
 volatile float g_servo_angle = SERVO_CENTER_ANGLE;
-float g_setpoint_mm = DEFAULT_TARGET_OFFSET_MM;
+float g_setpoint_offset_mm = DEFAULT_TARGET_OFFSET_MM;
 uint32_t g_serial_last_tick = 0U;
 uint32_t g_control_start_tick = 0U;
 uint32_t g_last_control_tick = 0U;
-uint8_t g_invalid_sample_count = 0U;
+uint16_t g_consecutive_invalid_samples = 0U;
+bool g_has_valid_distance = false;
 ControlMode_t g_control_mode = CONTROL_MODE_PD;
 ControlState_t g_control_state = CONTROL_STATE_INIT;
 /* USER CODE END PV */
@@ -142,6 +150,16 @@ static float apply_slew_limit(float previous, float target, float max_step)
     return previous - max_step;
   }
   return target;
+}
+
+static float distance_to_offset_mm(uint16_t distance_mm)
+{
+  return (float)distance_mm - DISTANCE_CENTER_MM;
+}
+
+static uint16_t abs_diff_u16(uint16_t a, uint16_t b)
+{
+  return (a > b) ? (a - b) : (b - a);
 }
 
 /* 读取一次激光测距结果，返回单位 mm。
@@ -219,8 +237,7 @@ int main(void)
   }
   Servo_Init();
   Servo_SetAngle(SERVO_CENTER_ANGLE);
-  PID_Init(&pid, 0.20f, 0.015f, 0.12f, 0.01f, PID_OUT_MIN_DEG, PID_OUT_MAX_DEG, 120.0f);
-  pid.integral_active_band = 45.0f;
+  PID_Init(&pid, PID_KP, PID_KI, PID_KD, CONTROL_PERIOD_SEC, PID_OUT_MIN_DEG, PID_OUT_MAX_DEG, PID_INTEGRAL_LIMIT, PID_INTEGRAL_ACTIVE_BAND_MM);
   pid.integral_enabled = false;
   PID_Reset(&pid, 0.0f);
   g_control_start_tick = HAL_GetTick();
@@ -242,22 +259,20 @@ int main(void)
       continue;
     }
 
-    g_last_control_tick += CONTROL_PERIOD_MS;
+    g_last_control_tick = now;
     uint16_t sampled_distance = VL53L0X_GetDistance();
     g_distance_mm = sampled_distance;
 
     bool valid_sample = false;
     if ((sampled_distance >= SENSOR_VALID_MIN_MM) && (sampled_distance <= SENSOR_VALID_MAX_MM))
     {
-      if ((g_last_valid_distance_mm == 0U) || (g_last_valid_distance_mm == 0xFFFFU))
+      if (!g_has_valid_distance)
       {
         valid_sample = true;
       }
       else
       {
-        uint16_t delta = (sampled_distance > g_last_valid_distance_mm)
-                             ? (sampled_distance - g_last_valid_distance_mm)
-                             : (g_last_valid_distance_mm - sampled_distance);
+        uint16_t delta = abs_diff_u16(sampled_distance, g_last_valid_distance_mm);
         valid_sample = (delta <= SENSOR_MAX_STEP_MM);
       }
     }
@@ -265,9 +280,10 @@ int main(void)
     if (valid_sample)
     {
       g_last_valid_distance_mm = sampled_distance;
-      g_invalid_sample_count = 0U;
+      g_has_valid_distance = true;
+      g_consecutive_invalid_samples = 0U;
 
-      float measurement_mm = (float)sampled_distance - DISTANCE_CENTER_MM;
+      float measurement_mm = distance_to_offset_mm(sampled_distance);
 
       if (g_control_state != CONTROL_STATE_RUN)
       {
@@ -286,7 +302,7 @@ int main(void)
         g_control_mode = CONTROL_MODE_PD;
       }
 
-      float control_output_deg = PID_Update(&pid, g_setpoint_mm, measurement_mm);
+      float control_output_deg = PID_Update(&pid, g_setpoint_offset_mm, measurement_mm);
       float target_servo_angle = SERVO_CENTER_ANGLE + control_output_deg;
       target_servo_angle = clampf(target_servo_angle, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
       g_servo_angle = apply_slew_limit(g_servo_angle, target_servo_angle, SERVO_MAX_STEP_DEG);
@@ -294,12 +310,9 @@ int main(void)
     }
     else
     {
-      if (g_invalid_sample_count < 255U)
-      {
-        g_invalid_sample_count++;
-      }
+      g_consecutive_invalid_samples++;
 
-      if (g_invalid_sample_count > MAX_CONSEC_INVALID_SAMPLES)
+      if (g_consecutive_invalid_samples > MAX_CONSEC_INVALID_SAMPLES)
       {
         g_control_state = CONTROL_STATE_FAULT;
         pid.integral_enabled = false;
@@ -328,10 +341,10 @@ int main(void)
     if ((uint32_t)(now - g_serial_last_tick) >= TELEMETRY_PERIOD_MS)
     {
       g_serial_last_tick = now;
-      float measurement_mm = (g_last_valid_distance_mm == 0U) ? 0.0f : ((float)g_last_valid_distance_mm - DISTANCE_CENTER_MM);
-      float error_mm = g_setpoint_mm - measurement_mm;
+      float measurement_mm = g_has_valid_distance ? distance_to_offset_mm(g_last_valid_distance_mm) : INVALID_TELEMETRY_MM;
+      float error_mm = g_has_valid_distance ? (g_setpoint_offset_mm - measurement_mm) : INVALID_TELEMETRY_MM;
       Serial_Printf("T=%.1f M=%.1f E=%.1f U=%.1f ANG=%.1f MODE=%u STATE=%u\r\n",
-                    g_setpoint_mm,
+                    g_setpoint_offset_mm,
                     measurement_mm,
                     error_mm,
                     g_servo_angle - SERVO_CENTER_ANGLE,
