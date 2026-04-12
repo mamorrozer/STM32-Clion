@@ -22,12 +22,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
-#include <math.h>
-#include <stdbool.h>
 #include "oled.h"
 #include "font.h"
 #include "Servo.h"
-#include "pid.h"
+#include "ball_beam_control.h"
 #include "vl53l0x.h"
 #include "../Inc/Serial.h"
 /* USER CODE END Includes */
@@ -39,33 +37,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define CONTROL_PERIOD_MS             10U
-#define TELEMETRY_PERIOD_MS           100U
-#define PID_ENABLE_DELAY_MS           1200U
-#define MAX_CONSEC_INVALID_SAMPLES    30U
-
-#define SENSOR_VALID_MIN_MM           40U
-#define SENSOR_VALID_MAX_MM           360U
-#define SENSOR_MAX_STEP_MM            60U
-
-#define DISTANCE_CENTER_MM            160.0f
-#define DEFAULT_TARGET_OFFSET_MM      0.0f
-
-#define SERVO_CENTER_ANGLE            90.0f
-#define SERVO_MIN_ANGLE               55.0f
-#define SERVO_MAX_ANGLE               125.0f
-#define SERVO_MAX_STEP_DEG            1.5f
-
-#define PID_OUT_MIN_DEG               (-25.0f)
-#define PID_OUT_MAX_DEG               (25.0f)
-#define PID_INTEGRAL_ACTIVE_BAND_MM   45.0f
-#define PID_KP                        0.20f
-#define PID_KI                        0.015f
-#define PID_KD                        0.12f
-#define CONTROL_PERIOD_SEC            0.01f
-#define PID_INTEGRAL_LIMIT            120.0f
-#define INVALID_TELEMETRY_MM          (-999.0f)
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -85,30 +56,8 @@ DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
-typedef enum {
-  CONTROL_MODE_PD = 0,
-  CONTROL_MODE_PID = 1
-} ControlMode_t;
-
-typedef enum {
-  CONTROL_STATE_INIT = 0,
-  CONTROL_STATE_RUN = 1,
-  CONTROL_STATE_FAULT = 2
-} ControlState_t;
-
 char oled_line[24];
-PID_Handle pid;
-volatile uint16_t g_distance_mm = 0xFFFFU;
-volatile uint16_t g_last_valid_distance_mm = 0U;
-volatile float g_servo_angle = SERVO_CENTER_ANGLE;
-float g_setpoint_offset_mm = DEFAULT_TARGET_OFFSET_MM;
-uint32_t g_serial_last_tick = 0U;
-uint32_t g_control_start_tick = 0U;
-uint32_t g_last_control_tick = 0U;
-uint16_t g_consecutive_invalid_samples = 0U;
-bool g_has_valid_distance = false;
-ControlMode_t g_control_mode = CONTROL_MODE_PD;
-ControlState_t g_control_state = CONTROL_STATE_INIT;
+BallBeamController_t g_ball_beam_ctrl;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -126,62 +75,6 @@ static void MX_I2C2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static float clampf(float value, float min_val, float max_val)
-{
-  if (value < min_val)
-  {
-    return min_val;
-  }
-  if (value > max_val)
-  {
-    return max_val;
-  }
-  return value;
-}
-
-static float apply_slew_limit(float previous, float target, float max_step)
-{
-  if (target > previous + max_step)
-  {
-    return previous + max_step;
-  }
-  if (target < previous - max_step)
-  {
-    return previous - max_step;
-  }
-  return target;
-}
-
-static float distance_to_offset_mm(uint16_t distance_mm)
-{
-  return (float)distance_mm - DISTANCE_CENTER_MM;
-}
-
-static uint16_t abs_diff_u16(uint16_t a, uint16_t b)
-{
-  return (a > b) ? (a - b) : (b - a);
-}
-
-/* 读取一次激光测距结果，返回单位 mm。
- * 返回 0xFFFF 表示本次测量无效。 */
-uint16_t VL53L0X_GetDistance(void)
-{
-  VL53L0X_RangingMeasurementData_t ranging_data;
-  static char range_status_buf[VL53L0X_MAX_STRING_LENGTH];
-
-  if (vl53l0x_start_single_test(&vl53l0x_dev, &ranging_data, range_status_buf) != VL53L0X_ERROR_NONE)
-  {
-    return 0xFFFFU;
-  }
-
-  if (ranging_data.RangeStatus != 0U)
-  {
-    return 0xFFFFU;
-  }
-
-  return ranging_data.RangeMilliMeter;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -236,14 +129,7 @@ int main(void)
     Error_Handler();
   }
   Servo_Init();
-  Servo_SetAngle(SERVO_CENTER_ANGLE);
-  PID_Init(&pid, PID_KP, PID_KI, PID_KD, CONTROL_PERIOD_SEC, PID_OUT_MIN_DEG, PID_OUT_MAX_DEG, PID_INTEGRAL_LIMIT, PID_INTEGRAL_ACTIVE_BAND_MM);
-  pid.integral_enabled = false;
-  PID_Reset(&pid, 0.0f);
-  g_control_start_tick = HAL_GetTick();
-  g_last_control_tick = g_control_start_tick;
-  g_control_state = CONTROL_STATE_INIT;
-  g_control_mode = CONTROL_MODE_PD;
+  BallBeamController_Init(&g_ball_beam_ctrl, HAL_GetTick());
   Serial_Printf("VL53L0X ready\r\n");
   /* USER CODE END 2 */
 
@@ -253,105 +139,22 @@ int main(void)
   {
     /* USER CODE END WHILE */
     uint32_t now = HAL_GetTick();
-    if ((uint32_t)(now - g_last_control_tick) < CONTROL_PERIOD_MS)
+    if (!BallBeamController_ShouldRunControl(&g_ball_beam_ctrl, now))
     {
       HAL_Delay(1);
       continue;
     }
 
-    g_last_control_tick = now;
-    uint16_t sampled_distance = VL53L0X_GetDistance();
-    g_distance_mm = sampled_distance;
-
-    bool valid_sample = false;
-    if ((sampled_distance >= SENSOR_VALID_MIN_MM) && (sampled_distance <= SENSOR_VALID_MAX_MM))
-    {
-      if (!g_has_valid_distance)
-      {
-        valid_sample = true;
-      }
-      else
-      {
-        uint16_t delta = abs_diff_u16(sampled_distance, g_last_valid_distance_mm);
-        valid_sample = (delta <= SENSOR_MAX_STEP_MM);
-      }
-    }
-
-    if (valid_sample)
-    {
-      g_last_valid_distance_mm = sampled_distance;
-      g_has_valid_distance = true;
-      g_consecutive_invalid_samples = 0U;
-
-      float measurement_mm = distance_to_offset_mm(sampled_distance);
-
-      if (g_control_state != CONTROL_STATE_RUN)
-      {
-        g_control_state = CONTROL_STATE_RUN;
-        PID_Reset(&pid, measurement_mm);
-      }
-
-      if ((uint32_t)(now - g_control_start_tick) >= PID_ENABLE_DELAY_MS)
-      {
-        pid.integral_enabled = true;
-        g_control_mode = CONTROL_MODE_PID;
-      }
-      else
-      {
-        pid.integral_enabled = false;
-        g_control_mode = CONTROL_MODE_PD;
-      }
-
-      float control_output_deg = PID_Update(&pid, g_setpoint_offset_mm, measurement_mm);
-      float target_servo_angle = SERVO_CENTER_ANGLE + control_output_deg;
-      target_servo_angle = clampf(target_servo_angle, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
-      g_servo_angle = apply_slew_limit(g_servo_angle, target_servo_angle, SERVO_MAX_STEP_DEG);
-      Servo_SetAngle(g_servo_angle);
-    }
-    else
-    {
-      g_consecutive_invalid_samples++;
-
-      if (g_consecutive_invalid_samples > MAX_CONSEC_INVALID_SAMPLES)
-      {
-        g_control_state = CONTROL_STATE_FAULT;
-        pid.integral_enabled = false;
-        g_control_mode = CONTROL_MODE_PD;
-        PID_Reset(&pid, 0.0f);
-        g_servo_angle = apply_slew_limit(g_servo_angle, SERVO_CENTER_ANGLE, SERVO_MAX_STEP_DEG);
-        Servo_SetAngle(g_servo_angle);
-      }
-    }
+    uint16_t sampled_distance = BallBeamController_ReadDistanceMm();
+    bool valid_sample = BallBeamController_Step(&g_ball_beam_ctrl, now, sampled_distance);
 
     /* 显示最近一次测距结果到 OLED */
-    if (!valid_sample)
-    {
-      sprintf(oled_line, "Dis: -- mm");
-    }
-    else
-    {
-      sprintf(oled_line, "Dis:%4u mm", sampled_distance);
-    }
-
+    BallBeamController_FormatDistanceLine(valid_sample, sampled_distance, oled_line, sizeof(oled_line));
     OLED_NewFrame();
     OLED_PrintString(0, 0, "Ball Beam Ctrl", &font16x16, OLED_COLOR_NORMAL);
     OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
-
-    if ((uint32_t)(now - g_serial_last_tick) >= TELEMETRY_PERIOD_MS)
-    {
-      g_serial_last_tick = now;
-      float measurement_mm = g_has_valid_distance ? distance_to_offset_mm(g_last_valid_distance_mm) : INVALID_TELEMETRY_MM;
-      float error_mm = g_has_valid_distance ? (g_setpoint_offset_mm - measurement_mm) : INVALID_TELEMETRY_MM;
-      Serial_Printf("T=%.1f M=%.1f E=%.1f U=%.1f ANG=%.1f MODE=%u STATE=%u\r\n",
-                    g_setpoint_offset_mm,
-                    measurement_mm,
-                    error_mm,
-                    g_servo_angle - SERVO_CENTER_ANGLE,
-                    g_servo_angle,
-                    (unsigned int)g_control_mode,
-                    (unsigned int)g_control_state);
-    }
+    BallBeamController_SendTelemetry(&g_ball_beam_ctrl, now);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */

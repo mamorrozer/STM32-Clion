@@ -37,7 +37,9 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/Servo.c
         Core/Src/oled.c
         Core/Src/pid.c
+        Core/Src/ball_beam_control.c
         Core/Inc/pid.h
+        Core/Inc/ball_beam_control.h
         Core/Src/Serial.c
         Core/Inc/Serial.h
 )
