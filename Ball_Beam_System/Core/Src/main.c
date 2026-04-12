@@ -22,6 +22,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <math.h>
+#include <stdbool.h>
 #include "oled.h"
 #include "font.h"
 #include "Servo.h"
@@ -37,6 +39,25 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define CONTROL_PERIOD_MS             10U
+#define TELEMETRY_PERIOD_MS           100U
+#define PID_ENABLE_DELAY_MS           1200U
+#define MAX_CONSEC_INVALID_SAMPLES    30U
+
+#define SENSOR_VALID_MIN_MM           40U
+#define SENSOR_VALID_MAX_MM           360U
+#define SENSOR_MAX_STEP_MM            60U
+
+#define DISTANCE_CENTER_MM            160.0f
+#define DEFAULT_TARGET_OFFSET_MM      0.0f
+
+#define SERVO_CENTER_ANGLE            90.0f
+#define SERVO_MIN_ANGLE               55.0f
+#define SERVO_MAX_ANGLE               125.0f
+#define SERVO_MAX_STEP_DEG            1.5f
+
+#define PID_OUT_MIN_DEG               (-25.0f)
+#define PID_OUT_MAX_DEG               (25.0f)
 
 /* USER CODE END PD */
 
@@ -57,13 +78,29 @@ DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
+typedef enum {
+  CONTROL_MODE_PD = 0,
+  CONTROL_MODE_PID = 1
+} ControlMode_t;
+
+typedef enum {
+  CONTROL_STATE_INIT = 0,
+  CONTROL_STATE_RUN = 1,
+  CONTROL_STATE_FAULT = 2
+} ControlState_t;
+
 char oled_line[24];
 PID_Handle pid;
 volatile uint16_t g_distance_mm = 0xFFFFU;
 volatile uint16_t g_last_valid_distance_mm = 0U;
-volatile float g_servo_angle = 90.0f;
-float g_setpoint_mm = 160.0f;
+volatile float g_servo_angle = SERVO_CENTER_ANGLE;
+float g_setpoint_mm = DEFAULT_TARGET_OFFSET_MM;
 uint32_t g_serial_last_tick = 0U;
+uint32_t g_control_start_tick = 0U;
+uint32_t g_last_control_tick = 0U;
+uint8_t g_invalid_sample_count = 0U;
+ControlMode_t g_control_mode = CONTROL_MODE_PD;
+ControlState_t g_control_state = CONTROL_STATE_INIT;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,6 +118,32 @@ static void MX_I2C2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static float clampf(float value, float min_val, float max_val)
+{
+  if (value < min_val)
+  {
+    return min_val;
+  }
+  if (value > max_val)
+  {
+    return max_val;
+  }
+  return value;
+}
+
+static float apply_slew_limit(float previous, float target, float max_step)
+{
+  if (target > previous + max_step)
+  {
+    return previous + max_step;
+  }
+  if (target < previous - max_step)
+  {
+    return previous - max_step;
+  }
+  return target;
+}
+
 /* 读取一次激光测距结果，返回单位 mm。
  * 返回 0xFFFF 表示本次测量无效。 */
 uint16_t VL53L0X_GetDistance(void)
@@ -155,8 +218,15 @@ int main(void)
     Error_Handler();
   }
   Servo_Init();
-  Servo_SetAngle(90.0f);
-  PID_Init(&pid, 0.20f, 0.02f, 0.10f, 0.01f, 0.0f, 180.0f, 200.0f);
+  Servo_SetAngle(SERVO_CENTER_ANGLE);
+  PID_Init(&pid, 0.20f, 0.015f, 0.12f, 0.01f, PID_OUT_MIN_DEG, PID_OUT_MAX_DEG, 120.0f);
+  pid.integral_active_band = 45.0f;
+  pid.integral_enabled = false;
+  PID_Reset(&pid, 0.0f);
+  g_control_start_tick = HAL_GetTick();
+  g_last_control_tick = g_control_start_tick;
+  g_control_state = CONTROL_STATE_INIT;
+  g_control_mode = CONTROL_MODE_PD;
   Serial_Printf("VL53L0X ready\r\n");
   /* USER CODE END 2 */
 
@@ -165,38 +235,110 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
+    uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - g_last_control_tick) < CONTROL_PERIOD_MS)
+    {
+      HAL_Delay(1);
+      continue;
+    }
+
+    g_last_control_tick += CONTROL_PERIOD_MS;
     uint16_t sampled_distance = VL53L0X_GetDistance();
     g_distance_mm = sampled_distance;
 
-    if (sampled_distance != 0xFFFFU)
+    bool valid_sample = false;
+    if ((sampled_distance >= SENSOR_VALID_MIN_MM) && (sampled_distance <= SENSOR_VALID_MAX_MM))
+    {
+      if ((g_last_valid_distance_mm == 0U) || (g_last_valid_distance_mm == 0xFFFFU))
+      {
+        valid_sample = true;
+      }
+      else
+      {
+        uint16_t delta = (sampled_distance > g_last_valid_distance_mm)
+                             ? (sampled_distance - g_last_valid_distance_mm)
+                             : (g_last_valid_distance_mm - sampled_distance);
+        valid_sample = (delta <= SENSOR_MAX_STEP_MM);
+      }
+    }
+
+    if (valid_sample)
     {
       g_last_valid_distance_mm = sampled_distance;
-      g_servo_angle = PID_Update(&pid, g_setpoint_mm, (float)sampled_distance);
+      g_invalid_sample_count = 0U;
+
+      float measurement_mm = (float)sampled_distance - DISTANCE_CENTER_MM;
+
+      if (g_control_state != CONTROL_STATE_RUN)
+      {
+        g_control_state = CONTROL_STATE_RUN;
+        PID_Reset(&pid, measurement_mm);
+      }
+
+      if ((uint32_t)(now - g_control_start_tick) >= PID_ENABLE_DELAY_MS)
+      {
+        pid.integral_enabled = true;
+        g_control_mode = CONTROL_MODE_PID;
+      }
+      else
+      {
+        pid.integral_enabled = false;
+        g_control_mode = CONTROL_MODE_PD;
+      }
+
+      float control_output_deg = PID_Update(&pid, g_setpoint_mm, measurement_mm);
+      float target_servo_angle = SERVO_CENTER_ANGLE + control_output_deg;
+      target_servo_angle = clampf(target_servo_angle, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
+      g_servo_angle = apply_slew_limit(g_servo_angle, target_servo_angle, SERVO_MAX_STEP_DEG);
       Servo_SetAngle(g_servo_angle);
-      char data[16];
-      sprintf(data, "%u ", sampled_distance);
-      Serial_SendString(data);
-      Serial_SendNumber((uint32_t)sampled_distance);
-
-
     }
+    else
+    {
+      if (g_invalid_sample_count < 255U)
+      {
+        g_invalid_sample_count++;
+      }
+
+      if (g_invalid_sample_count > MAX_CONSEC_INVALID_SAMPLES)
+      {
+        g_control_state = CONTROL_STATE_FAULT;
+        pid.integral_enabled = false;
+        g_control_mode = CONTROL_MODE_PD;
+        PID_Reset(&pid, 0.0f);
+        g_servo_angle = apply_slew_limit(g_servo_angle, SERVO_CENTER_ANGLE, SERVO_MAX_STEP_DEG);
+        Servo_SetAngle(g_servo_angle);
+      }
+    }
+
     /* 显示最近一次测距结果到 OLED */
-    uint16_t distance = g_distance_mm;
-    if (distance == 0xFFFFU)
+    if (!valid_sample)
     {
       sprintf(oled_line, "Dis: -- mm");
     }
     else
     {
-      sprintf(oled_line, "Dis:%4u mm", distance);
+      sprintf(oled_line, "Dis:%4u mm", sampled_distance);
     }
 
     OLED_NewFrame();
-    OLED_PrintString(0, 0, "VL53L0X HIGH SPD", &font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(0, 0, "Ball Beam Ctrl", &font16x16, OLED_COLOR_NORMAL);
     OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
-    
-    HAL_Delay(10);
+
+    if ((uint32_t)(now - g_serial_last_tick) >= TELEMETRY_PERIOD_MS)
+    {
+      g_serial_last_tick = now;
+      float measurement_mm = (g_last_valid_distance_mm == 0U) ? 0.0f : ((float)g_last_valid_distance_mm - DISTANCE_CENTER_MM);
+      float error_mm = g_setpoint_mm - measurement_mm;
+      Serial_Printf("T=%.1f M=%.1f E=%.1f U=%.1f ANG=%.1f MODE=%u STATE=%u\r\n",
+                    g_setpoint_mm,
+                    measurement_mm,
+                    error_mm,
+                    g_servo_angle - SERVO_CENTER_ANGLE,
+                    g_servo_angle,
+                    (unsigned int)g_control_mode,
+                    (unsigned int)g_control_state);
+    }
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
