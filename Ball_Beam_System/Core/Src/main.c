@@ -25,7 +25,7 @@
 #include "oled.h"
 #include "font.h"
 #include "Servo.h"
-#include "pid.h"
+#include "ball_beam_control.h"
 #include "vl53l0x.h"
 #include "../Inc/Serial.h"
 /* USER CODE END Includes */
@@ -37,7 +37,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -58,12 +57,7 @@ DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
 char oled_line[24];
-PID_Handle pid;
-volatile uint16_t g_distance_mm = 0xFFFFU;
-volatile uint16_t g_last_valid_distance_mm = 0U;
-volatile float g_servo_angle = 90.0f;
-float g_setpoint_mm = 160.0f;
-uint32_t g_serial_last_tick = 0U;
+BallBeamController_t g_ball_beam_ctrl;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,26 +75,6 @@ static void MX_I2C2_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-/* 读取一次激光测距结果，返回单位 mm。
- * 返回 0xFFFF 表示本次测量无效。 */
-uint16_t VL53L0X_GetDistance(void)
-{
-  VL53L0X_RangingMeasurementData_t ranging_data;
-  static char range_status_buf[VL53L0X_MAX_STRING_LENGTH];
-
-  if (vl53l0x_start_single_test(&vl53l0x_dev, &ranging_data, range_status_buf) != VL53L0X_ERROR_NONE)
-  {
-    return 0xFFFFU;
-  }
-
-  if (ranging_data.RangeStatus != 0U)
-  {
-    return 0xFFFFU;
-  }
-
-  return ranging_data.RangeMilliMeter;
-}
-
 /* USER CODE END 0 */
 
 /**
@@ -155,8 +129,7 @@ int main(void)
     Error_Handler();
   }
   Servo_Init();
-  Servo_SetAngle(90.0f);
-  PID_Init(&pid, 0.20f, 0.02f, 0.10f, 0.01f, 0.0f, 180.0f, 200.0f);
+  BallBeamController_Init(&g_ball_beam_ctrl, HAL_GetTick());
   Serial_Printf("VL53L0X ready\r\n");
   /* USER CODE END 2 */
 
@@ -165,38 +138,23 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    uint16_t sampled_distance = VL53L0X_GetDistance();
-    g_distance_mm = sampled_distance;
-
-    if (sampled_distance != 0xFFFFU)
+    uint32_t now = HAL_GetTick();
+    if (!BallBeamController_ShouldRunControl(&g_ball_beam_ctrl, now))
     {
-      g_last_valid_distance_mm = sampled_distance;
-      g_servo_angle = PID_Update(&pid, g_setpoint_mm, (float)sampled_distance);
-      Servo_SetAngle(g_servo_angle);
-      char data[16];
-      sprintf(data, "%u ", sampled_distance);
-      Serial_SendString(data);
-      Serial_SendNumber((uint32_t)sampled_distance);
-
-
+      HAL_Delay(1);
+      continue;
     }
+
+    uint16_t sampled_distance = BallBeamController_ReadDistanceMm();
+    bool valid_sample = BallBeamController_Step(&g_ball_beam_ctrl, now, sampled_distance);
+
     /* 显示最近一次测距结果到 OLED */
-    uint16_t distance = g_distance_mm;
-    if (distance == 0xFFFFU)
-    {
-      sprintf(oled_line, "Dis: -- mm");
-    }
-    else
-    {
-      sprintf(oled_line, "Dis:%4u mm", distance);
-    }
-
+    BallBeamController_FormatDistanceLine(valid_sample, sampled_distance, oled_line, sizeof(oled_line));
     OLED_NewFrame();
-    OLED_PrintString(0, 0, "VL53L0X HIGH SPD", &font16x16, OLED_COLOR_NORMAL);
+    OLED_PrintString(0, 0, "Ball Beam Ctrl", &font16x16, OLED_COLOR_NORMAL);
     OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
     OLED_ShowFrame();
-    
-    HAL_Delay(10);
+    BallBeamController_SendTelemetry(&g_ball_beam_ctrl, now);
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
