@@ -38,9 +38,9 @@ float PID_Update(PID_Handle *pid, float setpoint, float measurement)
     pid->prev_meas = measurement;
 
     // 3. 条件积分（积分使能 + 积分分离）
-    bool integral_active = pid->integral_enabled && (fabsf(error) <= pid->integral_active_band);
+    bool within_integral_band = pid->integral_enabled && (fabsf(error) <= pid->integral_active_band);
     float integral_candidate = pid->integral;
-    if (integral_active)
+    if (within_integral_band)
     {
         integral_candidate += error * pid->dt;
         if(integral_candidate > pid->integral_limit)  integral_candidate = pid->integral_limit;
@@ -59,8 +59,8 @@ float PID_Update(PID_Handle *pid, float setpoint, float measurement)
     bool saturated_high = (output_unsat > pid->out_max);
     bool saturated_low = (output_unsat < pid->out_min);
     // 饱和且误差继续推动同方向饱和时，不累加积分，避免 windup
-    bool drives_further_into_sat = (saturated_high && (error > 0.0f)) || (saturated_low && (error < 0.0f));
-    if (integral_active && !drives_further_into_sat)
+    bool drives_further_into_saturation = (saturated_high && (error > 0.0f)) || (saturated_low && (error < 0.0f));
+    if (within_integral_band && !drives_further_into_saturation)
     {
         pid->integral = integral_candidate;
     }

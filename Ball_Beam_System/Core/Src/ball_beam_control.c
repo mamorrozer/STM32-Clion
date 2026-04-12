@@ -200,7 +200,7 @@ void BallBeamController_SendTelemetry(BallBeamController_t *ctrl, uint32_t now_m
     float measurement_mm = ctrl->has_valid_distance ? distance_to_offset_mm(ctrl->last_valid_distance_mm) : INVALID_TELEMETRY_MM;
     float error_mm = ctrl->has_valid_distance ? (ctrl->setpoint_offset_mm - measurement_mm) : INVALID_TELEMETRY_MM;
 
-    Serial_Printf("T=%.1f M=%.1f E=%.1f U=%.1f ANG=%.1f MODE=%u STATE=%u\r\n",
+    Serial_Printf("SETPOINT=%.1f MEASUREMENT=%.1f ERROR=%.1f CONTROL_OUTPUT=%.1f ANGLE=%.1f MODE=%u STATE=%u\r\n",
                   ctrl->setpoint_offset_mm,
                   measurement_mm,
                   error_mm,
