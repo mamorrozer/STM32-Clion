@@ -27,7 +27,7 @@
 #define PID_OUT_MIN_NORM              (-1.0f)
 #define PID_OUT_MAX_NORM              (1.0f)
 #define PID_INTEGRAL_ACTIVE_BAND_NORM 0.80f
-#define PID_KP                        0.25f
+#define PID_KP                        0.26f
 #define PID_KI                        0.0f
 #define PID_KD                        0.4f
 #define CONTROL_PERIOD_SEC            0.01f // 控制周期，单位：秒
