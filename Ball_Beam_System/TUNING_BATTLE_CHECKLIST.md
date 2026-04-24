@@ -4,7 +4,7 @@
 
 ## 1. 调参前准备（必须先做）
 
-- [ ] 机械中位确认：舵机 90° 时横梁接近水平、球不会自动滚落。
+- [ ] 机械中位确认：舵机 50° 时横梁接近水平、球不会自动滚落。
 - [ ] 传感器静态检查：球不动时测距抖动在可接受范围（不要频繁跳大值）。
 - [ ] 安全边界确认：舵机最小/最大角度不会顶死机构。
 - [ ] 串口日志确认：能看到 `SETPOINT/MEASUREMENT/ERROR/CONTROL_OUTPUT/ANGLE/MODE/STATE`。
@@ -17,7 +17,8 @@
 - [ ] 调 `PID_ENABLE_DELAY_MS`：若开机初期不稳，延长延时，让系统先 PD 稳住再进 PID。
 - [ ] 调 `PID_INTEGRAL_ACTIVE_BAND_MM`：误差很大时不让积分介入，避免 windup；一般先中等范围，再按效果收紧/放宽。
 - [ ] 调 `PID_INTEGRAL_LIMIT`：防积分堆太多；若恢复慢且有“拖尾”，先减小它。
-- [ ] 调 `SERVO_MAX_STEP_DEG`：抖动大就减小，响应太慢就略增。
+- [ ] 调 `SERVO_SLEW_MAX_STEP_DEG`：抖动大就减小，响应太慢就略增。
+- [ ] 调 `SERVO_MIN_STEP_DEG`：若中心附近细小修正无效，按舵机实际分辨率设置。
 - [ ] 调 `SENSOR_MAX_STEP_MM`：误判无效数据多就放宽一点，噪声穿透多就收紧一点。
 
 ## 3. 每轮调参固定测试（每改一次参数都做）
@@ -46,7 +47,7 @@
 
 ## 参数记录模板（每轮调参填写）
 
-| 轮次 | Kp | Ki | Kd | PID_ENABLE_DELAY_MS | PID_INTEGRAL_ACTIVE_BAND_MM | PID_INTEGRAL_LIMIT | SERVO_MAX_STEP_DEG | SENSOR_MAX_STEP_MM | 稳定时间(s) | 稳态误差(mm) | 是否持续振荡 | 备注 |
+| 轮次 | Kp | Ki | Kd | PID_ENABLE_DELAY_MS | PID_INTEGRAL_ACTIVE_BAND_MM | PID_INTEGRAL_LIMIT | SERVO_SLEW_MAX_STEP_DEG | SERVO_MIN_STEP_DEG | SENSOR_MAX_STEP_MM | 稳定时间(s) | 稳态误差(mm) | 是否持续振荡 | 备注 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|
 | 1 |  |  |  |  |  |  |  |  |  |  |  |  |
 | 2 |  |  |  |  |  |  |  |  |  |  |  |  |

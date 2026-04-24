@@ -21,12 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include "oled.h"
-#include "font.h"
 #include "Servo.h"
 #include "ball_beam_control.h"
-#include "vl53l0x.h"
+#include "gp2y0a41.h"
 #include "../Inc/Serial.h"
 /* USER CODE END Includes */
 
@@ -45,6 +42,8 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
@@ -56,8 +55,8 @@ DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
 
 /* USER CODE BEGIN PV */
-char oled_line[24];
 BallBeamController_t g_ball_beam_ctrl;
+static bool g_sensor_ready = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -69,6 +68,7 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -112,25 +112,24 @@ int main(void)
   MX_TIM3_Init();
   MX_USART1_UART_Init();
   MX_I2C2_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  /* OLED 初始化 */
-  OLED_Init();
-  OLED_NewFrame();
-  OLED_PrintString(0, 0, "VL53L0X Init...", &font16x16, OLED_COLOR_NORMAL);
-  OLED_ShowFrame();
-  /* 初始化 VL53L0X（XSHUT=PA1，GPIO1=PA2） */
-  if (vl53l0x_init(&vl53l0x_dev) != VL53L0X_ERROR_NONE)
-  {
-    Error_Handler();
-  }
-  /* 设置为高频率模式 */
-  if (vl53l0x_set_mode(&vl53l0x_dev, HIGH_SPEED) != VL53L0X_ERROR_NONE)
-  {
-    Error_Handler();
-  }
+  HAL_Delay(20);
   Servo_Init();
-  BallBeamController_Init(&g_ball_beam_ctrl, HAL_GetTick());
-  Serial_Printf("VL53L0X ready\r\n");
+  Servo_SetAngle(SERVO_CENTER_ANGLE);
+  HAL_Delay(120);
+  if (GP2Y0A41_Init(&hadc1) != HAL_OK)
+  {
+    Serial_Printf("GP2Y0A41 init failed\r\n");
+    Servo_SetAngle(SERVO_CENTER_ANGLE);
+    g_sensor_ready = false;
+  }
+  else
+  {
+    g_sensor_ready = true;
+    BallBeamController_Init(&g_ball_beam_ctrl, HAL_GetTick());
+    Serial_Printf("GP2Y0A41 ready\r\n");
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -138,24 +137,18 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    uint32_t now = HAL_GetTick();
-    if (!BallBeamController_ShouldRunControl(&g_ball_beam_ctrl, now))
+
+    /* USER CODE BEGIN 3 */
+    if (!g_sensor_ready)
     {
-      HAL_Delay(1);
+      HAL_Delay(100);
       continue;
     }
 
-    uint16_t sampled_distance = BallBeamController_ReadDistanceMm();
-    bool valid_sample = BallBeamController_Step(&g_ball_beam_ctrl, now, sampled_distance);
-
-    /* 显示最近一次测距结果到 OLED */
-    BallBeamController_FormatDistanceLine(valid_sample, sampled_distance, oled_line, sizeof(oled_line));
-    OLED_NewFrame();
-    OLED_PrintString(0, 0, "Ball Beam Ctrl", &font16x16, OLED_COLOR_NORMAL);
-    OLED_PrintString(0, 20, oled_line, &font16x16, OLED_COLOR_NORMAL);
-    OLED_ShowFrame();
-    BallBeamController_SendTelemetry(&g_ball_beam_ctrl, now);
-    /* USER CODE BEGIN 3 */
+    uint32_t now_ms = HAL_GetTick();
+    uint16_t sampled_distance_mm = BallBeamController_ReadDistanceMm();
+    (void)BallBeamController_Step(&g_ball_beam_ctrl, now_ms, sampled_distance_mm);
+    BallBeamController_SendTelemetry(&g_ball_beam_ctrl, now_ms);
   }
   /* USER CODE END 3 */
 }
@@ -168,6 +161,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -197,6 +191,59 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_ADC;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV6;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 1;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
 }
 
 /**
@@ -288,7 +335,7 @@ static void MX_TIM2_Init(void)
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 7200-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 333-1;  /* 10 kHz / 333 ≈ 30.03 Hz */
+  htim2.Init.Period = 100-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -331,9 +378,9 @@ static void MX_TIM3_Init(void)
 
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 7200-1;
+  htim3.Init.Prescaler = 24-1;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 200-1;
+  htim3.Init.Period = 60000-1;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
@@ -377,7 +424,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
-  huart1.Init.BaudRate = 9600;
+  huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
   huart1.Init.StopBits = UART_STOPBITS_1;
   huart1.Init.Parity = UART_PARITY_NONE;
@@ -420,7 +467,6 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -429,26 +475,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(PIN_VL53L0X_XSHUT_GPIO_Port, PIN_VL53L0X_XSHUT_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PIN_VL53L0X_XSHUT_Pin */
-  GPIO_InitStruct.Pin = PIN_VL53L0X_XSHUT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(PIN_VL53L0X_XSHUT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PIN_VL53L0X_GPIO1_Pin */
-  GPIO_InitStruct.Pin = PIN_VL53L0X_GPIO1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(PIN_VL53L0X_GPIO1_GPIO_Port, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI2_IRQn, 15, 0);
-  HAL_NVIC_EnableIRQ(EXTI2_IRQn);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

@@ -34,12 +34,16 @@ enable_language(C ASM)
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/Servo.c
-        Core/Src/Servo.c
         Core/Src/oled.c
+        Core/Src/font.c
         Core/Src/pid.c
         Core/Src/ball_beam_control.c
+        Core/Src/gp2y0a41.c
+        Core/Src/adc_distance_converter.c
         Core/Inc/pid.h
         Core/Inc/ball_beam_control.h
+        Core/Inc/gp2y0a41.h
+        Core/Inc/adc_distance_converter.h
         Core/Src/Serial.c
         Core/Inc/Serial.h
 )
@@ -59,7 +63,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
-    # Add user defined include paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F1xx_HAL_Driver/Inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/STM32F1xx_HAL_Driver/Inc/Legacy
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/Device/ST/STM32F1xx/Include
+    ${CMAKE_CURRENT_SOURCE_DIR}/Drivers/CMSIS/Include
 )
 
 # Add project symbols (macros)

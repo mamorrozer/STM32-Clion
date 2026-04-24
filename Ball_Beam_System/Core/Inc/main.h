@@ -59,15 +59,6 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-/* VL53L0X 硬件连接:
- * XSHUT -> PA1
- * GPIO1 -> PA2
- */
-#define PIN_VL53L0X_XSHUT_Pin GPIO_PIN_1
-#define PIN_VL53L0X_XSHUT_GPIO_Port GPIOA
-#define PIN_VL53L0X_GPIO1_Pin GPIO_PIN_2
-#define PIN_VL53L0X_GPIO1_GPIO_Port GPIOA
-#define PIN_VL53L0X_GPIO1_EXTI_IRQn EXTI2_IRQn
 
 /* USER CODE BEGIN Private defines */
 

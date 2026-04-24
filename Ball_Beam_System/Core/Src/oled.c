@@ -26,8 +26,10 @@
 #include <math.h>
 #include <stdlib.h>
 
-// OLED器件地址
-#define OLED_ADDRESS 0x78
+// OLED器件地址(8-bit)
+#define OLED_ADDRESS_PRIMARY 0x78
+#define OLED_ADDRESS_ALT     0x7A
+#define OLED_I2C_TIMEOUT_MS 5U
 
 // OLED参数
 #define OLED_PAGE 8            // OLED页数
@@ -36,6 +38,24 @@
 
 // 显存
 uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
+static uint8_t s_oled_bus_fault = 0U;
+static uint16_t s_oled_address = OLED_ADDRESS_PRIMARY;
+static uint32_t s_oled_last_probe_tick = 0U;
+
+static void OLED_ProbeAddress(void)
+{
+  const uint16_t addresses[] = {OLED_ADDRESS_PRIMARY, OLED_ADDRESS_ALT};
+  for (uint32_t i = 0U; i < 2U; ++i)
+  {
+    if (HAL_I2C_IsDeviceReady(&hi2c1, addresses[i], 2U, OLED_I2C_TIMEOUT_MS) == HAL_OK)
+    {
+      s_oled_address = addresses[i];
+      s_oled_bus_fault = 0U;
+      return;
+    }
+  }
+  s_oled_bus_fault = 1U;
+}
 
 // ========================== 底层通信函数 ==========================
 
@@ -48,7 +68,25 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
  */
 void OLED_Send(uint8_t *data, uint8_t len)
 {
-  HAL_I2C_Master_Transmit(&hi2c1, OLED_ADDRESS, data, len, HAL_MAX_DELAY);
+  if (s_oled_bus_fault != 0U)
+  {
+    uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - s_oled_last_probe_tick) < 200U)
+    {
+      return;
+    }
+    s_oled_last_probe_tick = now;
+    OLED_ProbeAddress();
+    if (s_oled_bus_fault != 0U)
+    {
+      return;
+    }
+  }
+
+  if (HAL_I2C_Master_Transmit(&hi2c1, s_oled_address, data, len, OLED_I2C_TIMEOUT_MS) != HAL_OK)
+  {
+    s_oled_bus_fault = 1U;
+  }
 }
 
 /**
@@ -69,6 +107,7 @@ void OLED_SendCmd(uint8_t cmd)
  */
 void OLED_Init()
 {
+  OLED_ProbeAddress();
   OLED_SendCmd(0xAE); /*关闭显示 display off*/
 
   OLED_SendCmd(0x20);

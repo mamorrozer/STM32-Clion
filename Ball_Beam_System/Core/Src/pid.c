@@ -2,6 +2,7 @@
 #include <math.h>
 
 #define PID_INTEGRAL_BAND_UNLIMITED  (1.0e6f)
+#define PID_DERIVATIVE_FILTER_ALPHA  (0.20f)
 
 // 初始化：新增控制周期 dt
 void PID_Init(PID_Handle *pid, float Kp, float Ki, float Kd, float dt, float out_min, float out_max, float integral_limit, float integral_active_band)
@@ -17,6 +18,8 @@ void PID_Init(PID_Handle *pid, float Kp, float Ki, float Kd, float dt, float out
 
     pid->integral = 0;
     pid->prev_meas = 0;
+    pid->d_lpf_alpha = PID_DERIVATIVE_FILTER_ALPHA;
+    pid->d_filtered = 0.0f;
     pid->integral_enabled = false;
 }
 
@@ -24,6 +27,7 @@ void PID_Reset(PID_Handle *pid, float measurement)
 {
     pid->integral = 0.0f;
     pid->prev_meas = measurement;
+    pid->d_filtered = 0.0f;
 }
 
 float PID_Update(PID_Handle *pid, float setpoint, float measurement)
@@ -34,7 +38,9 @@ float PID_Update(PID_Handle *pid, float setpoint, float measurement)
     float Pout = pid->Kp * error;
 
     // 2. 微分项
-    float Dout = -pid->Kd * (measurement - pid->prev_meas) / pid->dt;
+    float d_raw = (measurement - pid->prev_meas) / pid->dt;
+    pid->d_filtered += pid->d_lpf_alpha * (d_raw - pid->d_filtered);
+    float Dout = -pid->Kd * pid->d_filtered;
     pid->prev_meas = measurement;
 
     // 3. 条件积分（积分使能 + 积分分离）
