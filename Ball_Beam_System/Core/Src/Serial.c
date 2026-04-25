@@ -138,3 +138,21 @@ void Serial_Printf(const char *format, ...)
 
     Serial_SendString(buf);
 }
+
+uint16_t Serial_AvailableForWrite(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+
+    uint16_t used = (serial_tx_head >= serial_tx_tail)
+                        ? (serial_tx_head - serial_tx_tail)
+                        : (SERIAL_TX_BUFFER_SIZE - (serial_tx_tail - serial_tx_head));
+    uint16_t free_space = (uint16_t)(SERIAL_TX_BUFFER_SIZE - 1U - used);
+
+    if (primask == 0U)
+    {
+        __enable_irq();
+    }
+
+    return free_space;
+}

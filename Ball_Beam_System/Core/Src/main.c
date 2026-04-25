@@ -146,8 +146,11 @@ int main(void)
     }
 
     uint32_t now_ms = HAL_GetTick();
-    uint16_t sampled_distance_mm = BallBeamController_ReadDistanceMm();
-    (void)BallBeamController_Step(&g_ball_beam_ctrl, now_ms, sampled_distance_mm);
+    if (BallBeamController_ShouldRunControl(&g_ball_beam_ctrl, now_ms))
+    {
+      uint16_t sampled_distance_mm = BallBeamController_ReadDistanceMm();
+      (void)BallBeamController_Step(&g_ball_beam_ctrl, now_ms, sampled_distance_mm);
+    }
     BallBeamController_SendTelemetry(&g_ball_beam_ctrl, now_ms);
   }
   /* USER CODE END 3 */

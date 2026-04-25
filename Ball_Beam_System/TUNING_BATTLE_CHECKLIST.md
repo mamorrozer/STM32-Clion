@@ -15,7 +15,7 @@
 - [ ] 第二步加 D：固定 `Kp`，小步增加 `Kd`，目标是减小超调和来回摆动；出现高频抖动就回退一点 `Kd`。
 - [ ] 第三步加 I：在 `Kp/Kd` 稳定后，小步增加 `Ki`，只为消除稳态误差；若出现慢速大幅摆动，减小 `Ki`。
 - [ ] 调 `PID_ENABLE_DELAY_MS`：若开机初期不稳，延长延时，让系统先 PD 稳住再进 PID。
-- [ ] 调 `PID_INTEGRAL_ACTIVE_BAND_MM`：误差很大时不让积分介入，避免 windup；一般先中等范围，再按效果收紧/放宽。
+- [ ] 调 `PID_INTEGRAL_ENTER_BAND_* / PID_INTEGRAL_EXIT_BAND_*`：给积分加进入/退出滞回，避免在边界附近反复开关；一般先让 `EXIT > ENTER`，再按振荡情况微调。
 - [ ] 调 `PID_INTEGRAL_LIMIT`：防积分堆太多；若恢复慢且有“拖尾”，先减小它。
 - [ ] 调 `SERVO_SLEW_MAX_STEP_DEG`：抖动大就减小，响应太慢就略增。
 - [ ] 调 `SERVO_MIN_STEP_DEG`：若中心附近细小修正无效，按舵机实际分辨率设置。

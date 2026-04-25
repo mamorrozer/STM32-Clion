@@ -41,6 +41,7 @@ uint8_t OLED_GRAM[OLED_PAGE][OLED_COLUMN];
 static uint8_t s_oled_bus_fault = 0U;
 static uint16_t s_oled_address = OLED_ADDRESS_PRIMARY;
 static uint32_t s_oled_last_probe_tick = 0U;
+static uint8_t s_oled_next_flush_page = 0U;
 
 static void OLED_ProbeAddress(void)
 {
@@ -211,15 +212,28 @@ void OLED_NewFrame()
  */
 void OLED_ShowFrame()
 {
-  static uint8_t sendBuffer[OLED_COLUMN + 1];
-  sendBuffer[0] = 0x40;
   for (uint8_t i = 0; i < OLED_PAGE; i++)
   {
-    OLED_SendCmd(0xB0 + i); // 设置页地址
-    OLED_SendCmd(0x00);     // 设置列地址低4位
-    OLED_SendCmd(0x10);     // 设置列地址高4位
-    memcpy(sendBuffer + 1, OLED_GRAM[i], OLED_COLUMN);
-    OLED_Send(sendBuffer, OLED_COLUMN + 1);
+    OLED_ShowFrameStep();
+  }
+}
+
+void OLED_ShowFrameStep()
+{
+  static uint8_t sendBuffer[OLED_COLUMN + 1];
+  uint8_t page = s_oled_next_flush_page;
+
+  sendBuffer[0] = 0x40;
+  OLED_SendCmd(0xB0 + page); // 设置页地址
+  OLED_SendCmd(0x00);        // 设置列地址低4位
+  OLED_SendCmd(0x10);        // 设置列地址高4位
+  memcpy(sendBuffer + 1, OLED_GRAM[page], OLED_COLUMN);
+  OLED_Send(sendBuffer, OLED_COLUMN + 1);
+
+  s_oled_next_flush_page++;
+  if (s_oled_next_flush_page >= OLED_PAGE)
+  {
+    s_oled_next_flush_page = 0U;
   }
 }
 

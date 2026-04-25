@@ -8,8 +8,8 @@
 #define SERVO_CENTER_ANGLE            35.0f
 #define SERVO_MIN_ANGLE               0.0f
 #define SERVO_MAX_ANGLE               70.0f
-#define SERVO_MIN_STEP_DEG            0.2f
-#define SERVO_SLEW_MAX_STEP_DEG       0.8f
+#define SERVO_MIN_STEP_DEG            0.0f
+#define SERVO_SLEW_MAX_STEP_DEG       10.0f
 
 typedef enum {
     CONTROL_MODE_PD = 0,
@@ -32,6 +32,10 @@ typedef struct {
     volatile float servo_angle;
     volatile float target_servo_angle;
     float setpoint_offset_mm;
+    float setpoint_cmd_mm;
+    float setpoint_slew_rate_mm_per_s;
+    float control_dt_sec;
+    float pid_actuator_feedback_norm;
     uint32_t serial_last_tick;
     uint32_t control_start_tick;
     uint32_t last_control_tick;
@@ -53,5 +57,6 @@ void BallBeamController_FormatDistanceLine(bool valid_sample, uint16_t sampled_d
 int32_t BallBeamController_GetFilteredDistanceMm(const BallBeamController_t *ctrl);
 int32_t BallBeamController_GetMeasurementMm(const BallBeamController_t *ctrl);
 void BallBeamController_SendTelemetry(BallBeamController_t *ctrl, uint32_t now_ms);
+void BallBeamController_SetSetpointMm(BallBeamController_t *ctrl, float setpoint_mm);
 
 #endif
