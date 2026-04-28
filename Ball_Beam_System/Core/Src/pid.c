@@ -1,11 +1,19 @@
 #include "pid.h"
 #include <math.h>
 
+/*
+ * 文件综述：
+ * PID核心计算实现（位置式）：
+ * - P: 当前误差；
+ * - I: 带进入/退出滞回的条件积分；
+ * - D: 对测量值微分并低通；
+ * - Anti-windup: 饱和时抑制积分继续累积并回算修正。
+ */
 #define PID_INTEGRAL_BAND_UNLIMITED  (1.0e6f)
 #define PID_DERIVATIVE_FILTER_ALPHA  (0.80f)
 #define PID_ANTI_WINDUP_GAIN_DEFAULT (0.30f)
 
-// 初始化：新增控制周期 dt
+/* 初始化：配置PID参数与运行状态。 */
 void PID_Init(PID_Handle *pid, float Kp, float Ki, float Kd, float dt, float out_min, float out_max,
               float integral_limit, float integral_enter_band, float integral_exit_band)
 {
@@ -49,16 +57,16 @@ float PID_Update(PID_Handle *pid, float setpoint, float measurement, float actua
     float error = setpoint - measurement;
     float abs_error = fabsf(error);
 
-    // 1. 比例项
+    // 1) 比例项
     float Pout = pid->Kp * error;
 
-    // 2. 微分项
+    // 2) 微分项（对测量值微分，等价于对误差微分取负，能减小目标阶跃冲击）
     float d_raw = (measurement - pid->prev_meas) / pid->dt;
     pid->d_filtered = pid->d_lpf_alpha * pid->d_filtered + (1.0f - pid->d_lpf_alpha) * d_raw;
     float Dout = -pid->Kd * pid->d_filtered;
     pid->prev_meas = measurement;
 
-    // 3. 条件积分（积分使能 + 进入/退出滞回）
+    // 3) 条件积分（积分使能 + 进入/退出滞回）
     if (!pid->integral_enabled)
     {
         pid->integral_band_active = false;
@@ -85,7 +93,7 @@ float PID_Update(PID_Handle *pid, float setpoint, float measurement, float actua
     float output_unsat = Pout + Iout + Dout;
     float output = output_unsat;
 
-    // 输出限幅（保护舵机）
+    // 输出限幅（保护执行器）
     if(output > pid->out_max) output = pid->out_max;
     if(output < pid->out_min) output = pid->out_min;
 

@@ -21,6 +21,13 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+/* 文件综述：
+ * main.c 负责系统初始化与主循环调度：
+ * - 完成外设初始化（GPIO/ADC/TIM/UART等）；
+ * - 初始化测距与控制器；
+ * - 周期运行控制步进与遥测；
+ * - 处理 PB12 按键切换目标点（中心/50mm）。
+ */
 #include "Servo.h"
 #include "ball_beam_control.h"
 #include "gp2y0a41.h"
@@ -34,6 +41,11 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define SETPOINT_BUTTON_PORT             GPIOB
+#define SETPOINT_BUTTON_PIN              GPIO_PIN_12
+#define SETPOINT_BUTTON_DEBOUNCE_MS      40U
+#define SETPOINT_CENTER_DISTANCE_MM      115.0f
+#define SETPOINT_TARGET_50MM             50.0f
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -57,6 +69,10 @@ DMA_HandleTypeDef hdma_usart1_rx;
 /* USER CODE BEGIN PV */
 BallBeamController_t g_ball_beam_ctrl;
 static bool g_sensor_ready = false;
+static bool g_setpoint_button_raw_pressed = false;
+static bool g_setpoint_button_stable_pressed = false;
+static uint32_t g_setpoint_button_last_change_ms = 0U;
+static bool g_setpoint_50mm_mode = false;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -70,11 +86,50 @@ static void MX_USART1_UART_Init(void);
 static void MX_I2C2_Init(void);
 static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
+static void UpdateSetpointButton(uint32_t now_ms);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void UpdateSetpointButton(uint32_t now_ms)
+{
+  /* 关键点：按键采用“原始电平变化 + 时间确认”的去抖方式，避免误触发切换目标。 */
+  bool raw_pressed = (HAL_GPIO_ReadPin(SETPOINT_BUTTON_PORT, SETPOINT_BUTTON_PIN) == GPIO_PIN_RESET);
+  if (raw_pressed != g_setpoint_button_raw_pressed)
+  {
+    g_setpoint_button_raw_pressed = raw_pressed;
+    g_setpoint_button_last_change_ms = now_ms;
+  }
+
+  if ((uint32_t)(now_ms - g_setpoint_button_last_change_ms) < SETPOINT_BUTTON_DEBOUNCE_MS)
+  {
+    return;
+  }
+
+  if (g_setpoint_button_stable_pressed == g_setpoint_button_raw_pressed)
+  {
+    return;
+  }
+
+  g_setpoint_button_stable_pressed = g_setpoint_button_raw_pressed;
+  if (!g_setpoint_button_stable_pressed)
+  {
+    return;
+  }
+
+  g_setpoint_50mm_mode = !g_setpoint_50mm_mode;
+  if (g_setpoint_50mm_mode)
+  {
+    BallBeamController_SetTargetDistanceMm(&g_ball_beam_ctrl, SETPOINT_TARGET_50MM);
+    Serial_Printf("Setpoint switched to 50mm\r\n");
+  }
+  else
+  {
+    BallBeamController_SetTargetDistanceMm(&g_ball_beam_ctrl, SETPOINT_CENTER_DISTANCE_MM);
+    Serial_Printf("Setpoint switched to center\r\n");
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -128,6 +183,11 @@ int main(void)
   {
     g_sensor_ready = true;
     BallBeamController_Init(&g_ball_beam_ctrl, HAL_GetTick());
+    BallBeamController_SetTargetDistanceMm(&g_ball_beam_ctrl, SETPOINT_CENTER_DISTANCE_MM);
+    g_setpoint_50mm_mode = false;
+    g_setpoint_button_raw_pressed = (HAL_GPIO_ReadPin(SETPOINT_BUTTON_PORT, SETPOINT_BUTTON_PIN) == GPIO_PIN_RESET);
+    g_setpoint_button_stable_pressed = g_setpoint_button_raw_pressed;
+    g_setpoint_button_last_change_ms = HAL_GetTick();
     Serial_Printf("GP2Y0A41 ready\r\n");
   }
   /* USER CODE END 2 */
@@ -146,6 +206,7 @@ int main(void)
     }
 
     uint32_t now_ms = HAL_GetTick();
+    UpdateSetpointButton(now_ms);
     if (BallBeamController_ShouldRunControl(&g_ball_beam_ctrl, now_ms))
     {
       uint16_t sampled_distance_mm = BallBeamController_ReadDistanceMm();
@@ -470,6 +531,7 @@ static void MX_DMA_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
   /* USER CODE END MX_GPIO_Init_1 */
@@ -480,7 +542,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
+  GPIO_InitStruct.Pin = SETPOINT_BUTTON_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(SETPOINT_BUTTON_PORT, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 

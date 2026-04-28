@@ -5,6 +5,15 @@
 #include <stdint.h>
 #include "pid.h"
 
+/*
+ * 文件综述：
+ * 小球平衡控制器的对外接口与状态定义。
+ * 该控制器负责：
+ * - 采样有效性管理；
+ * - PID/PD状态切换；
+ * - 远端强制回拉保护；
+ * - 目标点切换与遥测输出。
+ */
 #define SERVO_CENTER_ANGLE            35.0f
 #define SERVO_MIN_ANGLE               0.0f
 #define SERVO_MAX_ANGLE               70.0f
@@ -42,8 +51,14 @@ typedef struct {
     uint16_t consecutive_invalid_samples;
     uint16_t anti_stall_counter;
     uint16_t near_center_stuck_counter;
+    uint16_t far_end_exit_counter;
+    uint16_t far_end_stuck_counter;
+    uint16_t far_end_recovery_cooldown;
+    uint8_t far_end_recovery_phase;
+    uint8_t far_end_recovery_success_counter;
     float prev_abs_error_mm;
     bool center_hold_active;
+    bool far_end_recovery_active;
     bool has_valid_distance;
     BallBeamControlMode_t mode;
     BallBeamControlState_t state;
@@ -58,5 +73,6 @@ int32_t BallBeamController_GetFilteredDistanceMm(const BallBeamController_t *ctr
 int32_t BallBeamController_GetMeasurementMm(const BallBeamController_t *ctrl);
 void BallBeamController_SendTelemetry(BallBeamController_t *ctrl, uint32_t now_ms);
 void BallBeamController_SetSetpointMm(BallBeamController_t *ctrl, float setpoint_mm);
+void BallBeamController_SetTargetDistanceMm(BallBeamController_t *ctrl, float target_distance_mm);
 
 #endif

@@ -10,6 +10,12 @@ extern UART_HandleTypeDef huart1;
 
 #define SERIAL_TX_BUFFER_SIZE 1024U
 
+/*
+ * 文件综述：
+ * 1) 使用环形缓冲区缓存待发串口数据；
+ * 2) 使用 USART1 发送完成中断串行推进下一段发送；
+ * 3) 主循环只负责“塞数据”，不直接阻塞等待串口硬件。
+ */
 static uint8_t serial_tx_buffer[SERIAL_TX_BUFFER_SIZE];
 static volatile uint16_t serial_tx_head = 0U;
 static volatile uint16_t serial_tx_tail = 0U;
@@ -31,6 +37,7 @@ static void serial_start_next_transfer(void)
     uint32_t primask = __get_PRIMASK();
     __disable_irq();
 
+    /* 关键点：head/tail/busy 是并发共享状态，需要临界区保护。 */
     if ((!serial_tx_busy) && (serial_tx_head != serial_tx_tail))
     {
         uint16_t tx_len = (serial_tx_head > serial_tx_tail) ? (serial_tx_head - serial_tx_tail) : (SERIAL_TX_BUFFER_SIZE - serial_tx_tail);
@@ -69,6 +76,7 @@ void Serial_SendData(const uint8_t *data, uint16_t length)
         uint16_t next_head = serial_next_index(serial_tx_head);
         if (next_head == serial_tx_tail)
         {
+            /* 缓冲区满：新数据丢弃，保持系统实时性，不在这里阻塞。 */
             break;
         }
         serial_tx_buffer[serial_tx_head] = data[i];

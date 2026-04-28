@@ -4,6 +4,11 @@
 #include "stdint.h"
 #include <stdbool.h>
 
+/*
+ * 文件综述：
+ * 通用PID结构体与接口定义。
+ * 支持：微分低通、积分使能与滞回窗口、输出限幅、抗积分饱和(back-calculation)。
+ */
 typedef struct {
     float Kp;           // 比例系数
     float Ki;           // 积分系数

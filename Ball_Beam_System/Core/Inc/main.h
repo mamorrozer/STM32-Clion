@@ -31,6 +31,10 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+/* 文件综述：
+ * main.h 是工程主入口头文件，提供 HAL 公共依赖与全局入口声明。
+ * 用户自定义的全局宏/声明可放在 USER CODE 区域，避免被代码生成覆盖。
+ */
 
 /* USER CODE END Includes */
 

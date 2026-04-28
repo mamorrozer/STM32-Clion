@@ -1,6 +1,11 @@
 #include "gp2y0a41.h"
 #include "adc_distance_converter.h"
 
+/*
+ * 文件综述：
+ * 该文件实现 GP2Y0A41 的底层采样时序：
+ * 触发ADC -> 轮询完成 -> 读取原始值 -> 转换为距离。
+ */
 static ADC_HandleTypeDef *s_hadc = NULL;
 static uint16_t s_last_adc_raw = 0xFFFFU;
 
@@ -41,6 +46,7 @@ uint16_t GP2Y0A41_ReadDistanceMm(void)
 
     if (HAL_ADC_PollForConversion(s_hadc, 5U) != HAL_OK)
     {
+        /* 采样超时直接判无效，避免主控制使用不确定值。 */
         (void)HAL_ADC_Stop(s_hadc);
         s_last_adc_raw = 0xFFFFU;
         return GP2Y0A41_INVALID_DISTANCE_MM;

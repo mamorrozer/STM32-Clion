@@ -1,6 +1,13 @@
 #include "adc_distance_converter.h"
 
 /*
+ * 文件综述：
+ * 本文件保存距离标定表，并执行“ADC值 -> 距离(mm)”转换。
+ * 设计要点：
+ * 1) 标定区用线性插值；
+ * 2) 近端/远端超界做硬限幅，降低漏光和极限区误读带来的控制风险。
+ */
+/*
  * 在这里维护 ADC 原始值与距离(mm)的标定点。
  * 要求 adc_raw 按从大到小排列。
  *
@@ -66,7 +73,7 @@ uint16_t AdcDistance_ConvertRawToMm(uint16_t adc_raw)
         return k_adc_distance_points[last_index].distance_mm;
     }
 
-    /* 正常区间：高精度线性插值 */
+    /* 正常区间：在相邻标定点之间线性插值（并做四舍五入）。 */
     for (uint32_t i = 0U; i < last_index; ++i)
     {
         const uint16_t raw1 = k_adc_distance_points[i].adc_raw;
