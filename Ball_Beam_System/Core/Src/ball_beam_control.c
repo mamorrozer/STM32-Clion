@@ -16,7 +16,7 @@
  */
 #define CONTROL_PERIOD_MS             10U
 #define CONTROL_PERIOD_SEC            ((float)CONTROL_PERIOD_MS * 0.001f)
-#define TELEMETRY_PERIOD_MS           500U
+#define TELEMETRY_PERIOD_MS           100U
 #define PID_ENABLE_DELAY_MS           400U
 #define MAX_CONSEC_INVALID_SAMPLES    60U
 
@@ -79,6 +79,10 @@
 #define PID_SOFT_END_MARGIN_DEG       6.0f  // PID 软限位，避免两端硬撞
 #define PID_SOFT_END_MARGIN_EMERGENCY_DEG 0.5f
 #define EDGE_RECOVERY_ERROR_MM        30.0f
+#define FAR_SIDE_GENTLE_START_MM      5.0f
+#define FAR_SIDE_GENTLE_FULL_MM       55.0f
+#define FAR_SIDE_GENTLE_MIN_PULL_DEG  6.0f
+#define FAR_SIDE_GENTLE_MAX_PULL_DEG  26.0f
 #define INVALID_RECOVERY_ANGLE_DEG    SERVO_MIN_ANGLE
 #define INVALID_TELEMETRY_MM          (-999.0f) // 无效测距值
 
@@ -657,6 +661,23 @@ bool BallBeamController_Step(BallBeamController_t *ctrl, uint32_t now_ms, uint16
             ctrl->control_output_deg = target_servo_angle - SERVO_CENTER_ANGLE;
         }
 
+        if (!ctrl->far_end_recovery_active)
+        {
+            float far_error_mm = measurement_mm - ctrl->setpoint_offset_mm;
+            if (far_error_mm > FAR_SIDE_GENTLE_START_MM)
+            {
+                float ratio = clampf((far_error_mm - FAR_SIDE_GENTLE_START_MM) /
+                                     (FAR_SIDE_GENTLE_FULL_MM - FAR_SIDE_GENTLE_START_MM), 0.0f, 1.0f);
+                float max_pull_deg = FAR_SIDE_GENTLE_MIN_PULL_DEG +
+                                     ratio * (FAR_SIDE_GENTLE_MAX_PULL_DEG - FAR_SIDE_GENTLE_MIN_PULL_DEG);
+                float min_servo_angle = SERVO_CENTER_ANGLE - max_pull_deg;
+                if (target_servo_angle < min_servo_angle)
+                {
+                    target_servo_angle = min_servo_angle;
+                }
+            }
+        }
+
         if (ctrl->mode == CONTROL_MODE_PID)
         {
             float soft_end_margin_deg = PID_SOFT_END_MARGIN_DEG;
@@ -743,41 +764,8 @@ int32_t BallBeamController_GetMeasurementMm(const BallBeamController_t *ctrl)
 
 void BallBeamController_SendTelemetry(BallBeamController_t *ctrl, uint32_t now_ms)
 {
-    static const char *k_mode_names[] = {"PD", "PID"};
-    static const char *k_state_names[] = {"INIT", "RUN", "FAULT"};
-
-    int32_t setpoint_mm = (int32_t)(ctrl->setpoint_offset_mm + ((ctrl->setpoint_offset_mm >= 0.0f) ? 0.5f : -0.5f));
-    int32_t setpoint_cmd_mm = (int32_t)(ctrl->setpoint_cmd_mm + ((ctrl->setpoint_cmd_mm >= 0.0f) ? 0.5f : -0.5f));
     int32_t measurement_mm = BallBeamController_GetMeasurementMm(ctrl);
-    int32_t error_mm = (measurement_mm == (int32_t)INVALID_TELEMETRY_MM) ? (int32_t)INVALID_TELEMETRY_MM : (setpoint_mm - measurement_mm);
-    float cmd_out_deg = ctrl->target_servo_angle - SERVO_CENTER_ANGLE;
-    float act_out_deg = ctrl->servo_angle - SERVO_CENTER_ANGLE;
-    int32_t cmd_out_x10 = (int32_t)(cmd_out_deg * 10.0f + ((cmd_out_deg >= 0.0f) ? 0.5f : -0.5f));
-    int32_t act_out_x10 = (int32_t)(act_out_deg * 10.0f + ((act_out_deg >= 0.0f) ? 0.5f : -0.5f));
-    int32_t cmd_angle_x10 = (int32_t)(ctrl->target_servo_angle * 10.0f + ((ctrl->target_servo_angle >= 0.0f) ? 0.5f : -0.5f));
-    int32_t servo_angle_x10 = (int32_t)(ctrl->servo_angle * 10.0f + ((ctrl->servo_angle >= 0.0f) ? 0.5f : -0.5f));
-    uint32_t mode_index = ((uint32_t)ctrl->mode <= (uint32_t)CONTROL_MODE_PID) ? (uint32_t)ctrl->mode : 0U;
-    uint32_t state_index = ((uint32_t)ctrl->state <= (uint32_t)CONTROL_STATE_FAULT) ? (uint32_t)ctrl->state : 0U;
-    int32_t cmd_out_frac_x10 = cmd_out_x10 % 10;
-    int32_t act_out_frac_x10 = act_out_x10 % 10;
-    int32_t cmd_angle_frac_x10 = cmd_angle_x10 % 10;
-    int32_t servo_angle_frac_x10 = servo_angle_x10 % 10;
-    if (cmd_out_frac_x10 < 0)
-    {
-        cmd_out_frac_x10 = -cmd_out_frac_x10;
-    }
-    if (act_out_frac_x10 < 0)
-    {
-        act_out_frac_x10 = -act_out_frac_x10;
-    }
-    if (cmd_angle_frac_x10 < 0)
-    {
-        cmd_angle_frac_x10 = -cmd_angle_frac_x10;
-    }
-    if (servo_angle_frac_x10 < 0)
-    {
-        servo_angle_frac_x10 = -servo_angle_frac_x10;
-    }
+    int32_t output_mm = (measurement_mm == (int32_t)INVALID_TELEMETRY_MM) ? -9999 : measurement_mm;
 
     if ((uint32_t)(now_ms - ctrl->serial_last_tick) < TELEMETRY_PERIOD_MS)
     {
@@ -785,51 +773,9 @@ void BallBeamController_SendTelemetry(BallBeamController_t *ctrl, uint32_t now_m
     }
 
     ctrl->serial_last_tick = now_ms;
-    char telemetry_line[220];
+    char telemetry_line[20];
     int line_len;
-    if (measurement_mm != (int32_t)INVALID_TELEMETRY_MM)
-    {
-        line_len = snprintf(telemetry_line,
-                            sizeof(telemetry_line),
-                            "RAW_ADC:%u DIST_MM:%u MEAS_MM:%ld SETPOINT_MM:%ld SETPOINT_CMD_MM:%ld ERROR_MM:%ld DT_MS:%lu CMD_OUT:%ld.%01lddeg ACT_OUT:%ld.%01lddeg CMD_ANGLE:%ld.%01lddeg SERVO_ANGLE:%ld.%01lddeg MODE:%s STATE:%s\r\n",
-                            (unsigned int)ctrl->last_adc_raw,
-                            (unsigned int)ctrl->last_valid_distance_mm,
-                            (long)measurement_mm,
-                            (long)setpoint_mm,
-                            (long)setpoint_cmd_mm,
-                            (long)error_mm,
-                            (unsigned long)(ctrl->control_dt_sec * 1000.0f + 0.5f),
-                            (long)(cmd_out_x10 / 10),
-                            (long)cmd_out_frac_x10,
-                            (long)(act_out_x10 / 10),
-                            (long)act_out_frac_x10,
-                            (long)(cmd_angle_x10 / 10),
-                            (long)cmd_angle_frac_x10,
-                            (long)(servo_angle_x10 / 10),
-                            (long)servo_angle_frac_x10,
-                            k_mode_names[mode_index],
-                            k_state_names[state_index]);
-    }
-    else
-    {
-        line_len = snprintf(telemetry_line,
-                            sizeof(telemetry_line),
-                            "RAW_ADC:%u DIST_MM:-- MEAS_MM:-- SETPOINT_MM:%ld SETPOINT_CMD_MM:%ld ERROR_MM:-- DT_MS:%lu CMD_OUT:%ld.%01lddeg ACT_OUT:%ld.%01lddeg CMD_ANGLE:%ld.%01lddeg SERVO_ANGLE:%ld.%01lddeg MODE:%s STATE:%s\r\n",
-                            (unsigned int)ctrl->last_adc_raw,
-                            (long)setpoint_mm,
-                            (long)setpoint_cmd_mm,
-                            (unsigned long)(ctrl->control_dt_sec * 1000.0f + 0.5f),
-                            (long)(cmd_out_x10 / 10),
-                            (long)cmd_out_frac_x10,
-                            (long)(act_out_x10 / 10),
-                            (long)act_out_frac_x10,
-                            (long)(cmd_angle_x10 / 10),
-                            (long)cmd_angle_frac_x10,
-                            (long)(servo_angle_x10 / 10),
-                            (long)servo_angle_frac_x10,
-                            k_mode_names[mode_index],
-                            k_state_names[state_index]);
-    }
+    line_len = snprintf(telemetry_line, sizeof(telemetry_line), "[p,%ld]\r\n", (long)output_mm);
 
     if (line_len <= 0)
     {

@@ -18,7 +18,7 @@
 #define SERVO_MIN_ANGLE               0.0f
 #define SERVO_MAX_ANGLE               70.0f
 #define SERVO_MIN_STEP_DEG            0.0f
-#define SERVO_SLEW_MAX_STEP_DEG       10.0f
+#define SERVO_SLEW_MAX_STEP_DEG       4.0f
 
 typedef enum {
     CONTROL_MODE_PD = 0,

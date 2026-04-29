@@ -45,7 +45,9 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Inc/gp2y0a41.h
         Core/Inc/adc_distance_converter.h
         Core/Src/Serial.c
+        Core/Src/app_runtime.c
         Core/Inc/Serial.h
+        Core/Inc/app_runtime.h
 )
 
 # Add STM32CubeMX generated sources
