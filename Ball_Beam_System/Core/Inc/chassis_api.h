@@ -135,7 +135,7 @@ void Chassis_Set_PID(uint8_t motor_id, float kp, float ki, float kd);
 /**
  * @brief 触发紧急制动（最高优先级，可在任意中断/任务中调用）
  *        立即清零 PWM 并锁定状态为 EMERGENCY，须通过
- *        Chassis_FSM_Reset()（内部）或重新 Chassis_Init() 解除。
+ *        Chassis_Emergency_Reset() 解除。
  */
 void Chassis_Emergency_Stop(void);
 

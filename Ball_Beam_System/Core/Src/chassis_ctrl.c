@@ -55,7 +55,7 @@ void ChassisCtrl_Init(ChassisCtrl_Handle *ctrl,
     ctrl->motor_set_pwm    = pwm_fn;
     ctrl->encoder_read     = enc_fn;
 
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         /*
          * integral_enter_band = 0.0f → PID_Init 内部替换为 1e6f（无限制）
          * integral_exit_band  = 0.0f → 同上，速度闭环全范围积分
@@ -85,7 +85,7 @@ void ChassisCtrl_SetPID(ChassisCtrl_Handle *ctrl,
 void ChassisCtrl_SetTarget(ChassisCtrl_Handle *ctrl,
                            const WheelSpeed_t *target)
 {
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         ctrl->target.v[i] = target->v[i];
     }
 }
@@ -96,33 +96,33 @@ void ChassisCtrl_Update(ChassisCtrl_Handle *ctrl)
 
     /* Step 1: 关中断，原子批量读取4路编码器差值（< 0.1μs @72MHz） */
     CHASSIS_ENTER_CRITICAL();
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
-        counts[i] = ctrl->encoder_read(i);
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+        counts[i] = ctrl->encoder_read((uint8_t)i);
     }
     CHASSIS_EXIT_CRITICAL();
 
     /* Step 2: 差值计数 → 轮速 (rad/s)
      *   actual = delta_counts × (2π / CPR) / dt  */
     float inv_dt = 1.0f / ctrl->dt;
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         ctrl->actual.v[i] = (float)counts[i] * ctrl->encoder_to_rad * inv_dt;
     }
 
     /* Step 3 & 4: PID计算 + 写入PWM影子寄存器（BSP侧预加载使能后同步生效） */
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         float output = PID_Update(&ctrl->pid[i],
                                   ctrl->target.v[i],
                                   ctrl->actual.v[i],
                                   0.0f);  /* actuator_feedback 保留扩展，当前传 0 */
-        ctrl->motor_set_pwm(i, output);
+        ctrl->motor_set_pwm((uint8_t)i, output);
     }
 }
 
 void ChassisCtrl_Stop(ChassisCtrl_Handle *ctrl)
 {
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         ctrl->target.v[i] = 0.0f;
-        ctrl->motor_set_pwm(i, 0.0f);
+        ctrl->motor_set_pwm((uint8_t)i, 0.0f);
         PID_Reset(&ctrl->pid[i], ctrl->actual.v[i]);
     }
 }
@@ -130,7 +130,7 @@ void ChassisCtrl_Stop(ChassisCtrl_Handle *ctrl)
 void ChassisCtrl_GetActual(const ChassisCtrl_Handle *ctrl,
                            WheelSpeed_t *out)
 {
-    for (uint8_t i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
+    for (unsigned int i = 0U; i < CHASSIS_MOTOR_COUNT; i++) {
         out->v[i] = ctrl->actual.v[i];
     }
 }
