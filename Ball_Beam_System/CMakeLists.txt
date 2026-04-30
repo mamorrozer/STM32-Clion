@@ -48,6 +48,11 @@ add_executable(${CMAKE_PROJECT_NAME}
         Core/Src/app_runtime.c
         Core/Inc/Serial.h
         Core/Inc/app_runtime.h
+        # 麦轮底盘控制模块
+        Core/Src/kinematics.c
+        Core/Src/chassis_ctrl.c
+        Core/Src/chassis_fsm.c
+        Core/Src/chassis_api.c
 )
 
 # Add STM32CubeMX generated sources
